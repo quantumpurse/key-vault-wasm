@@ -89,8 +89,8 @@ pub fn sign(
         .try_into()
         .map_err(|_| "Signature length mismatch".to_string())?;
 
-    let pk_bytes: &[u8; PUBKEY_LEN] = pk
-        .into_bytes()
+    let pk_raw = pk.into_bytes();
+    let pk_bytes: &[u8; PUBKEY_LEN] = pk_raw
         .as_ref()
         .try_into()
         .map_err(|_| "Public key length mismatch".to_string())?;
