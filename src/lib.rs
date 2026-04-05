@@ -10,6 +10,7 @@ use ckb_fips205_utils::{
     ckb_tx_message_all_from_mock_tx::{generate_ckb_tx_message_all_from_mock_tx, ScriptOrIndex},
     Hasher,
 };
+use ckb_fips204_utils::signing as mldsa_signing;
 use ckb_mock_tx_types::{MockTransaction, ReprMockTransaction};
 use fips205::{
     traits::{KeyGen, SerDes, Signer},
@@ -528,6 +529,185 @@ impl KeyVault {
         }
         Ok(lock_args_array)
     }
+
+    // ── ML-DSA-65 (FIPS 204) account management ───────────────────────────────
+
+    /// Retrieves all ML-DSA-65 lock script arguments from the database in insertion order.
+    ///
+    /// **Returns**:
+    /// - `Result<Vec<String>, JsValue>` - Array of hex-encoded 36-byte lock args on success.
+    ///
+    /// **Async**: Yes
+    #[wasm_bindgen]
+    pub async fn get_all_ml_dsa_lock_args() -> Result<Vec<String>, JsValue> {
+        db::get_all_ml_dsa_lock_args().await.map_err(|e| e.to_jsvalue())
+    }
+
+    /// Generates a new ML-DSA-65 account derived from the wallet master seed.
+    ///
+    /// Derives the account at index = (number of existing ML-DSA-65 accounts).
+    /// The secret key is never stored — it is re-derived on every signing call.
+    ///
+    /// **Parameters**:
+    /// - `js_password: Uint8Array` - Password to decrypt the master seed. Zeroed after use.
+    ///
+    /// **Returns**:
+    /// - `Result<String, JsValue>` - Hex-encoded 36-byte ML-DSA-65 lock args on success.
+    ///
+    /// **Async**: Yes
+    #[wasm_bindgen]
+    pub async fn gen_new_ml_dsa_account(&self, js_password: Uint8Array) -> Result<String, JsValue> {
+        let password = SecureString::from_uint8array(js_password)
+            .map_err(|e| JsValue::from_str(&e))?;
+
+        if password.is_empty() || password.is_uninitialized() {
+            return Err(JsValue::from_str("Password cannot be empty or uninitialized"));
+        }
+
+        let payload = db::get_encrypted_seed()
+            .await
+            .map_err(|e| e.to_jsvalue())?
+            .ok_or_else(|| JsValue::from_str("Master seed not found"))?;
+        let seed = utilities::decrypt(password.as_ref(), payload)?;
+
+        let index = Self::get_all_ml_dsa_lock_args().await?.len() as u32;
+        let (_pubkey, lock_args) = mldsa_signing::derive_lock_args(&seed, index)
+            .map_err(|e| JsValue::from_str(&format!("ML-DSA-65 key derivation error: {}", e)))?;
+
+        let lock_args_hex = encode(lock_args);
+        let account = MlDsaAccount {
+            index: 0, // set correctly by add_ml_dsa_account
+            lock_args: lock_args_hex.clone(),
+        };
+        db::add_ml_dsa_account(account).await.map_err(|e| e.to_jsvalue())?;
+        Ok(lock_args_hex)
+    }
+
+    /// Signs a CKB transaction with an ML-DSA-65 key and returns the MldsaWitness bytes.
+    ///
+    /// **Parameters**:
+    /// - `js_password: Uint8Array` - Password to decrypt the master seed. Zeroed after use.
+    /// - `lock_args: String` - Hex-encoded lock args identifying the signing account.
+    /// - `tx_hash: Uint8Array` - Raw 32-byte CKB transaction hash.
+    ///
+    /// **Returns**:
+    /// - `Result<Uint8Array, JsValue>` - 5305-byte Molecule-encoded MldsaWitness (the `WitnessArgs.lock` content).
+    ///
+    /// **Async**: Yes
+    #[wasm_bindgen]
+    pub async fn sign_ml_dsa(
+        &self,
+        js_password: Uint8Array,
+        lock_args: String,
+        tx_hash: Uint8Array,
+    ) -> Result<Uint8Array, JsValue> {
+        let password = SecureString::from_uint8array(js_password)
+            .map_err(|e| JsValue::from_str(&e))?;
+
+        if password.is_empty() || password.is_uninitialized() {
+            return Err(JsValue::from_str("Password cannot be empty or uninitialized"));
+        }
+
+        let account = db::get_ml_dsa_account(&lock_args)
+            .await
+            .map_err(|e| e.to_jsvalue())?
+            .ok_or_else(|| JsValue::from_str("ML-DSA account not found"))?;
+
+        let payload = db::get_encrypted_seed()
+            .await
+            .map_err(|e| e.to_jsvalue())?
+            .ok_or_else(|| JsValue::from_str("Master seed not found"))?;
+        let seed = utilities::decrypt(password.as_ref(), payload)?;
+
+        let tx_hash_bytes = tx_hash.to_vec();
+        let witness_bytes = mldsa_signing::sign(&seed, account.index, &tx_hash_bytes)
+            .map_err(|e| JsValue::from_str(&format!("ML-DSA-65 signing error: {}", e)))?;
+
+        Ok(Uint8Array::from(witness_bytes.as_slice()))
+    }
+
+    /// Batch-derives ML-DSA-65 lock args without storing them — used for wallet recovery scanning.
+    ///
+    /// **Parameters**:
+    /// - `js_password: Uint8Array` - Password to decrypt the master seed. Zeroed after use.
+    /// - `start_index: u32` - Starting derivation index.
+    /// - `count: u32` - Number of accounts to derive.
+    ///
+    /// **Returns**:
+    /// - `Result<Vec<String>, JsValue>` - Array of hex-encoded lock args.
+    ///
+    /// **Async**: Yes
+    #[wasm_bindgen]
+    pub async fn try_gen_ml_dsa_account_batch(
+        &self,
+        js_password: Uint8Array,
+        start_index: u32,
+        count: u32,
+    ) -> Result<Vec<String>, JsValue> {
+        let password = SecureString::from_uint8array(js_password)
+            .map_err(|e| JsValue::from_str(&e))?;
+
+        if password.is_empty() || password.is_uninitialized() {
+            return Err(JsValue::from_str("Password cannot be empty or uninitialized"));
+        }
+
+        let payload = db::get_encrypted_seed()
+            .await
+            .map_err(|e| e.to_jsvalue())?
+            .ok_or_else(|| JsValue::from_str("Master seed not found"))?;
+        let seed = utilities::decrypt(password.as_ref(), payload)?;
+
+        let mut results = Vec::with_capacity(count as usize);
+        for i in start_index..(start_index + count) {
+            let (_pubkey, lock_args) = mldsa_signing::derive_lock_args(&seed, i)
+                .map_err(|e| JsValue::from_str(&format!("ML-DSA-65 key derivation error: {}", e)))?;
+            results.push(encode(lock_args));
+        }
+        Ok(results)
+    }
+
+    /// Recover ML-DSA-65 accounts — derives and caches `count` accounts from index 0.
+    ///
+    /// **Parameters**:
+    /// - `js_password: Uint8Array` - Password to decrypt the master seed. Zeroed after use.
+    /// - `count: u32` - Number of accounts to recover.
+    ///
+    /// **Returns**:
+    /// - `Result<Vec<String>, JsValue>` - Hex-encoded lock args for each recovered account.
+    ///
+    /// **Async**: Yes
+    #[wasm_bindgen]
+    pub async fn recover_ml_dsa_accounts(
+        &self,
+        js_password: Uint8Array,
+        count: u32,
+    ) -> Result<Vec<String>, JsValue> {
+        let password = SecureString::from_uint8array(js_password)
+            .map_err(|e| JsValue::from_str(&e))?;
+
+        if password.is_empty() || password.is_uninitialized() {
+            return Err(JsValue::from_str("Password cannot be empty or uninitialized"));
+        }
+
+        let payload = db::get_encrypted_seed()
+            .await
+            .map_err(|e| e.to_jsvalue())?
+            .ok_or_else(|| JsValue::from_str("Master seed not found"))?;
+        let seed = utilities::decrypt(password.as_ref(), payload)?;
+
+        let mut results = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let (_pubkey, lock_args) = mldsa_signing::derive_lock_args(&seed, i)
+                .map_err(|e| JsValue::from_str(&format!("ML-DSA-65 key derivation error: {}", e)))?;
+            let lock_args_hex = encode(lock_args);
+            let account = MlDsaAccount { index: 0, lock_args: lock_args_hex.clone() };
+            db::add_ml_dsa_account(account).await.map_err(|e| e.to_jsvalue())?;
+            results.push(lock_args_hex);
+        }
+        Ok(results)
+    }
+
+    // ── SPHINCS+ lock script args builder ────────────────────────────────────
 
     /// Building CKB SPHINCS+ all-in-one lockscript arguments
     ///

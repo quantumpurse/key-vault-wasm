@@ -7,6 +7,7 @@ pub const DB_NAME: &str = "quantum_purse";
 pub const MASTER_SEED_KEY: &str = "master_seed";
 pub const MASTER_SEED_STORE: &str = "master_seed_store";
 pub const CHILD_KEYS_STORE: &str = "child_keys_store";
+pub const ML_DSA_KEYS_STORE: &str = "ml_dsa_keys_store";
 pub const KDF_PATH_PREFIX: &str = "ckb/quantum-purse/sphincs-plus/";
 
 /// Given NIST new security post-quantum standards categorized as:

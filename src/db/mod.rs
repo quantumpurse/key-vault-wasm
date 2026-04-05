@@ -1,14 +1,14 @@
 mod errors;
 
-use super::types::{CipherPayload, SphincsPlusAccount};
-use crate::constants::{CHILD_KEYS_STORE, DB_NAME, MASTER_SEED_KEY, MASTER_SEED_STORE};
+use super::types::{CipherPayload, MlDsaAccount, SphincsPlusAccount};
+use crate::constants::{CHILD_KEYS_STORE, DB_NAME, MASTER_SEED_KEY, MASTER_SEED_STORE, ML_DSA_KEYS_STORE};
 use errors::KeyVaultDBError;
 use indexed_db_futures::{
     database::Database, prelude::*, transaction::TransactionMode, iter::ArrayMapIter
 };
 use wasm_bindgen::{JsValue};
 
-const VERSION:u8 = 1;
+const VERSION: u8 = 2;
 
 /// Opens the IndexedDB database, creating object stores if necessary.
 ///
@@ -22,13 +22,16 @@ pub async fn open_db() -> Result<Database, KeyVaultDBError> {
         .with_on_blocked(|_event| Ok(()))
         .with_on_upgrade_needed(|event, db| {
             let old_version = event.old_version() as u8;
-            
+
             if old_version < 1 {
                 db.create_object_store(MASTER_SEED_STORE).build()?;
                 db.create_object_store(CHILD_KEYS_STORE).build()?;
             }
 
-            // reserved for future upgrades
+            if old_version < 2 {
+                // ML-DSA-65 accounts store (added in v0.4.0)
+                db.create_object_store(ML_DSA_KEYS_STORE).build()?;
+            }
 
             Ok(())
         })
@@ -141,6 +144,65 @@ pub async fn get_account(lock_args: &str) -> Result<Option<SphincsPlusAccount>, 
     }
 }
 
+// ── ML-DSA-65 account CRUD ────────────────────────────────────────────────────
+
+/// Stores an ML-DSA-65 account in the indexed DB.
+pub async fn add_ml_dsa_account(mut account: MlDsaAccount) -> Result<(), KeyVaultDBError> {
+    let db = open_db().await?;
+    let tx = db
+        .transaction(ML_DSA_KEYS_STORE)
+        .with_mode(TransactionMode::Readwrite)
+        .build()?;
+    let store = tx.object_store(ML_DSA_KEYS_STORE)?;
+    let count = store.count().await?;
+    account.index = count as u32;
+    let js_value = serde_wasm_bindgen::to_value(&account)?;
+    store.add(js_value).with_key(account.lock_args).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Retrieves an ML-DSA-65 account by its lock script args.
+pub async fn get_ml_dsa_account(lock_args: &str) -> Result<Option<MlDsaAccount>, KeyVaultDBError> {
+    let db = open_db().await?;
+    let tx = db
+        .transaction(ML_DSA_KEYS_STORE)
+        .with_mode(TransactionMode::Readonly)
+        .build()?;
+    let store = tx.object_store(ML_DSA_KEYS_STORE)?;
+    if let Some(js_value) = store
+        .get(lock_args)
+        .await
+        .map_err(|e| KeyVaultDBError::DatabaseError(e.to_string()))?
+    {
+        let account: MlDsaAccount = serde_wasm_bindgen::from_value(js_value)?;
+        Ok(Some(account))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Retrieves all ML-DSA-65 lock args from the indexed DB, sorted by insertion order.
+pub async fn get_all_ml_dsa_lock_args() -> Result<Vec<String>, KeyVaultDBError> {
+    let db = open_db().await?;
+    let tx = db
+        .transaction(ML_DSA_KEYS_STORE)
+        .with_mode(TransactionMode::Readonly)
+        .build()?;
+    let store = tx.object_store(ML_DSA_KEYS_STORE)?;
+    let iter: ArrayMapIter<JsValue> = store.get_all().await?;
+    let mut accounts: Vec<MlDsaAccount> = Vec::new();
+    for result in iter {
+        let js_value = result?;
+        let account: MlDsaAccount = serde_wasm_bindgen::from_value(js_value)?;
+        accounts.push(account);
+    }
+    accounts.sort_by_key(|a| a.index);
+    Ok(accounts.into_iter().map(|a| a.lock_args).collect())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Clears all data in the `master_seed_store` and `child_keys_store` in IndexedDB.
 ///
 /// **Returns**:
@@ -151,6 +213,7 @@ pub async fn clear_all_stores() -> Result<(), KeyVaultDBError> {
     let db = open_db().await?;
     clear_object_store(&db, MASTER_SEED_STORE).await?;
     clear_object_store(&db, CHILD_KEYS_STORE).await?;
+    clear_object_store(&db, ML_DSA_KEYS_STORE).await?;
     Ok(())
 }
 
