@@ -8,14 +8,14 @@
 //! path prefix to ensure complete key-space separation between the two schemes.
 
 use fips204::ml_dsa_65;
-use fips204::traits::{KeyGen, SerDes, Signer};
+use fips204::traits::{KeyGen, SerDes, Signer as _};
 use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
     lock_args_from_pubkey, serialize_mldsa_witness, signing_message,
-    KDF_PATH_PREFIX, LOCK_ARGS_LEN, MLDSA_WITNESS_LEN, PUBKEY_LEN, SIG_LEN, SK_LEN,
+    KDF_PATH_PREFIX, LOCK_ARGS_LEN, PUBKEY_LEN, SIG_LEN, SK_LEN,
 };
 
 /// A zeroize-on-drop container for an ML-DSA-65 secret key.
@@ -75,11 +75,11 @@ pub fn sign(
     );
 
     let msg = signing_message(tx_hash);
-    let signing_key = ml_dsa_65::PrivateKey::try_from_bytes(&sk_bytes.0)
+    let signing_key = ml_dsa_65::PrivateKey::try_from_bytes(sk_bytes.0)
         .map_err(|e| format!("Invalid ML-DSA-65 secret key: {:?}", e))?;
 
     let signature = signing_key
-        .try_sign(&msg, CRATE_DOMAIN)
+        .try_sign_with_seed(&[0u8; 32], &msg, CRATE_DOMAIN)
         .map_err(|e| format!("ML-DSA-65 signing failed: {:?}", e))?;
 
     sk_bytes.0.zeroize();
