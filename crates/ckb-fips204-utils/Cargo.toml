@@ -1,0 +1,13 @@
+[package]
+name = "ckb-fips204-utils"
+version = "0.1.0"
+edition = "2021"
+description = "ML-DSA-65 (FIPS 204) utilities for CKB blockchain lock scripts"
+license = "MIT"
+
+[dependencies]
+ckb-hash = { version = "0.200.0", default-features = false }
+fips204 = { version = "0.4.6", default-features = false, features = ["ml-dsa-65"] }
+hkdf = "0.12.4"
+sha2 = "0.10.9"
+zeroize = { version = "1.8.1", features = ["derive"] }

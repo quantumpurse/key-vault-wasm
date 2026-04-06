@@ -35,6 +35,17 @@ pub struct SphincsPlusAccount {
     pub lock_args: String,
 }
 
+/// Represents an ML-DSA-65 account with its lock script args.
+///
+/// **Fields**:
+/// - `index: u32` - db addition order (independent sequence from SPHINCS+ accounts)
+/// - `lock_args: String` - hex-encoded 36-byte lock args: `[version | algo_id | param_id | reserved | blake2b_256(pubkey)]`
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MlDsaAccount {
+    pub index: u32,
+    pub lock_args: String,
+}
+
 /// ID of all 12 SPHINCS+ variants following https://github.com/cryptape/quantum-resistant-lock-script/
 #[wasm_bindgen]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]

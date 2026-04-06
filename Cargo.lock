@@ -225,6 +225,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ckb-fips204-utils"
+version = "0.1.0"
+dependencies = [
+ "ckb-hash",
+ "fips204",
+ "hkdf",
+ "sha2",
+ "zeroize",
+]
+
+[[package]]
 name = "ckb-fips205-utils"
 version = "0.1.0"
 dependencies = [
@@ -588,6 +599,18 @@ name = "faster-hex"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51e2ce894d53b295cf97b05685aa077950ff3e8541af83217fc720a6437169f8"
+
+[[package]]
+name = "fips204"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9fb5a367b9846933e271a3c2a992930743f82ae5e8cb7faa780715a80fa0b15"
+dependencies = [
+ "rand_core 0.6.4",
+ "sha2",
+ "sha3",
+ "zeroize",
+]
 
 [[package]]
 name = "fips205"
@@ -1038,10 +1061,11 @@ dependencies = [
 
 [[package]]
 name = "quantum-purse-key-vault"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "bip39",
+ "ckb-fips204-utils",
  "ckb-fips205-utils",
  "ckb-mock-tx-types",
  "fips205",
